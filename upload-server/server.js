@@ -228,54 +228,81 @@ const html = `<!DOCTYPE html>
     const info = task.querySelector('.t-info');
     const fileId = uuid();
     const total = Math.ceil(file.size / CHUNK_LIMIT);
-    let uploadedBytes = 0;
+    const CONCURRENCY = 3; // 同时传输的路数
+    const activeLoaded = {};
+    let doneBytes = 0;      // 已完成的字节数
+    let nextIdx = 0;
+    let lastDone = 0, lastTime = 0, speed = 0;
 
-    (async () => {
-      for (let i = 0; i < total; i++) {
+    function updateProgress() {
+      let activeSum = 0;
+      for (const k in activeLoaded) activeSum += activeLoaded[k];
+      const done = doneBytes + activeSum;
+      const p = Math.round(done / file.size * 100);
+      bar.style.width = p + '%';
+      pct.textContent = p + '%';
+      const now = Date.now();
+      if (lastTime) {
+        const dt = (now - lastTime) / 1000;
+        if (dt > 0.2) {
+          const inst = (done - lastDone) / dt;
+          speed = speed ? speed * 0.6 + inst * 0.4 : inst;
+          lastDone = done;
+          lastTime = now;
+        }
+      } else { lastDone = done; lastTime = now; }
+      if (speed > 0) info.textContent = fmtSpeed(speed) + ' · 预计还需 ' + fmtTime((file.size - done) / speed);
+    }
+
+    function uploadOne(i) {
+      return new Promise((resolve, reject) => {
         const start = i * CHUNK_LIMIT;
         const end = Math.min(file.size, start + CHUNK_LIMIT);
         const blob = file.slice(start, end);
-        chunkTag.textContent = '分片 ' + (i + 1) + '/' + total;
         const fd = new FormData();
         fd.append('chunkIndex', i);
         fd.append('totalChunks', total);
         fd.append('fileId', fileId);
         fd.append('file', blob, file.name);
-        await new Promise((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', '/upload');
-          let lastLoaded = 0, lastTime = 0, speed = 0;
-          xhr.upload.onprogress = (e) => {
-            if (!e.lengthComputable) return;
-            const done = uploadedBytes + e.loaded;
-            const p = Math.round(done / file.size * 100);
-            bar.style.width = p + '%';
-            pct.textContent = p + '%';
-            const now = Date.now();
-            if (lastTime) {
-              const dt = (now - lastTime) / 1000;
-              if (dt > 0.15) {
-                const inst = (e.loaded - lastLoaded) / dt;
-                speed = speed ? speed * 0.6 + inst * 0.4 : inst;
-                lastLoaded = e.loaded;
-                lastTime = now;
-              }
-            } else { lastLoaded = e.loaded; lastTime = now; }
-            if (speed > 0) info.textContent = fmtSpeed(speed) + ' · 预计还需 ' + fmtTime((file.size - done) / speed);
-          };
-          xhr.onload = () => {
-            let r = null;
-            try { r = JSON.parse(xhr.responseText); } catch (e) { r = null; }
-            if (r && r.ok) { uploadedBytes += blob.size; resolve(); }
-            else {
-              let msg = (r && r.error) ? r.error : ('HTTP ' + (xhr.status || '?'));
-              reject(new Error('分片 ' + (i + 1) + ' 失败: ' + msg));
-            }
-          };
-          xhr.onerror = () => reject(new Error('分片 ' + (i + 1) + ' 网络错误'));
-          xhr.send(fd);
-        });
-      }
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload');
+        xhr.upload.onprogress = (e) => {
+          if (!e.lengthComputable) return;
+          activeLoaded[i] = e.loaded;
+          updateProgress();
+        };
+        xhr.onload = () => {
+          let r = null;
+          try { r = JSON.parse(xhr.responseText); } catch (e) { r = null; }
+          if (r && r.ok) {
+            doneBytes += blob.size;
+            delete activeLoaded[i];
+            updateProgress();
+            resolve();
+          } else {
+            let msg = (r && r.error) ? r.error : ('HTTP ' + (xhr.status || '?'));
+            reject(new Error('分片 ' + (i + 1) + ' 失败: ' + msg));
+          }
+        };
+        xhr.onerror = () => reject(new Error('分片 ' + (i + 1) + ' 网络错误'));
+        xhr.send(fd);
+      });
+    }
+
+    (async () => {
+      chunkTag.textContent = '并发 ' + Math.min(CONCURRENCY, total) + ' 路分片传输中';
+      const workers = [];
+      const run = async () => {
+        while (true) {
+          const i = nextIdx++;
+          if (i >= total) return;
+          await uploadOne(i);
+        }
+      };
+      const n = Math.min(CONCURRENCY, total);
+      for (let k = 0; k < n; k++) workers.push(run());
+      await Promise.all(workers);
+
       // 所有分片完成，请求服务端合并
       chunkTag.textContent = '';
       info.textContent = '分片全部上传完成，正在合并...';
@@ -287,7 +314,7 @@ const html = `<!DOCTYPE html>
       let mr = null;
       try { mr = await mres.json(); } catch (e) { mr = null; }
       if (mr && mr.ok) {
-        task.classList.add('done'); pct.textContent = '✅ 完成'; info.textContent = '已合并上传 ' + fmtSize(file.size) + '（' + total + ' 片）'; showToast('✅ ' + file.name + ' 上传成功'); refresh();
+        task.classList.add('done'); pct.textContent = '✅ 完成'; info.textContent = '已合并上传 ' + fmtSize(file.size) + '（' + total + ' 片并发）'; showToast('✅ ' + file.name + ' 上传成功'); refresh();
       } else {
         throw new Error('合并失败: ' + ((mr && mr.error) || '未知错误'));
       }
