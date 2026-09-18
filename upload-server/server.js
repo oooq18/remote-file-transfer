@@ -97,7 +97,7 @@ const html = `<!DOCTYPE html>
 </div>
 <div id="toast"></div>
 <script>
-  const CHUNK_LIMIT = 95 * 1024 * 1024; // 单片上限 95MB（隧道限制约100MB，留余量）
+  const CHUNK_LIMIT = 30 * 1024 * 1024; // 单片上限 30MB（隧道慢且Cloudflare有100秒超时，小片更稳）
   const drop = document.getElementById('drop');
   const input = document.getElementById('fileInput');
   const pickBtn = document.getElementById('pickBtn');
@@ -228,7 +228,8 @@ const html = `<!DOCTYPE html>
     const info = task.querySelector('.t-info');
     const fileId = uuid();
     const total = Math.ceil(file.size / CHUNK_LIMIT);
-    const CONCURRENCY = 3; // 同时传输的路数
+    const CONCURRENCY = 4; // 同时传输的路数
+    const MAX_ATTEMPTS = 3; // 单片失败自动重试次数
     const activeLoaded = {};
     let doneBytes = 0;      // 已完成的字节数
     let nextIdx = 0;
@@ -259,33 +260,44 @@ const html = `<!DOCTYPE html>
         const start = i * CHUNK_LIMIT;
         const end = Math.min(file.size, start + CHUNK_LIMIT);
         const blob = file.slice(start, end);
-        const fd = new FormData();
-        fd.append('chunkIndex', i);
-        fd.append('totalChunks', total);
-        fd.append('fileId', fileId);
-        fd.append('file', blob, file.name);
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', '/upload');
-        xhr.upload.onprogress = (e) => {
-          if (!e.lengthComputable) return;
-          activeLoaded[i] = e.loaded;
-          updateProgress();
-        };
-        xhr.onload = () => {
-          let r = null;
-          try { r = JSON.parse(xhr.responseText); } catch (e) { r = null; }
-          if (r && r.ok) {
-            doneBytes += blob.size;
-            delete activeLoaded[i];
+        const attempt = (triesLeft) => {
+          const fd = new FormData();
+          fd.append('chunkIndex', i);
+          fd.append('totalChunks', total);
+          fd.append('fileId', fileId);
+          fd.append('file', blob, file.name);
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', '/upload');
+          xhr.upload.onprogress = (e) => {
+            if (!e.lengthComputable) return;
+            activeLoaded[i] = e.loaded;
             updateProgress();
-            resolve();
-          } else {
-            let msg = (r && r.error) ? r.error : ('HTTP ' + (xhr.status || '?'));
-            reject(new Error('分片 ' + (i + 1) + ' 失败: ' + msg));
-          }
+          };
+          const fail = (msg) => {
+            delete activeLoaded[i];
+            if (triesLeft > 1) {
+              info.textContent = '分片 ' + (i + 1) + ' 失败(' + msg + ')，自动重试 ' + (triesLeft - 1) + ' 次';
+              setTimeout(() => attempt(triesLeft - 1), 1200);
+            } else {
+              reject(new Error('分片 ' + (i + 1) + ' 失败: ' + msg));
+            }
+          };
+          xhr.onload = () => {
+            let r = null;
+            try { r = JSON.parse(xhr.responseText); } catch (e) { r = null; }
+            if (r && r.ok) {
+              doneBytes += blob.size;
+              delete activeLoaded[i];
+              updateProgress();
+              resolve();
+            } else {
+              fail((r && r.error) ? r.error : ('HTTP ' + (xhr.status || '?')));
+            }
+          };
+          xhr.onerror = () => fail('网络错误');
+          xhr.send(fd);
         };
-        xhr.onerror = () => reject(new Error('分片 ' + (i + 1) + ' 网络错误'));
-        xhr.send(fd);
+        attempt(MAX_ATTEMPTS);
       });
     }
 
