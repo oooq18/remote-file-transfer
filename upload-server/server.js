@@ -175,11 +175,21 @@ const html = `<!DOCTYPE html>
       };
       xhr.onload = () => {
         bar.style.width = '100%';
-        try {
-          const r = JSON.parse(xhr.responseText);
-          if (r.ok) { task.classList.add('done'); pct.textContent = '✅ 完成'; info.textContent = '已上传 ' + fmtSize(file.size); showToast('✅ ' + file.name + ' 上传成功'); refresh(); }
-          else { task.classList.add('err'); pct.textContent = '❌ 失败'; info.textContent = r.error || '未知错误'; showToast('上传失败: ' + (r.error || '未知错误'), true); }
-        } catch(err) { task.classList.add('err'); pct.textContent = '❌ 失败'; info.textContent = '解析错误'; showToast('上传失败', true); }
+        let r = null;
+        try { r = JSON.parse(xhr.responseText); } catch (e) { r = null; }
+        if (r && r.ok) {
+          task.classList.add('done'); pct.textContent = '✅ 完成'; info.textContent = '已上传 ' + fmtSize(file.size); showToast('✅ ' + file.name + ' 上传成功'); refresh();
+        } else {
+          task.classList.add('err'); pct.textContent = '❌ 失败';
+          let msg = '';
+          if (xhr.status === 413) msg = '文件过大，超过通道限制（约100MB）';
+          else if (xhr.status === 502 || xhr.status === 504) msg = '网关超时：文件过大或通道限速，建议压缩后再传';
+          else if (r && r.error) msg = r.error;
+          else if (xhr.status) msg = 'HTTP ' + xhr.status + ' 服务器拒绝';
+          else msg = '连接中断';
+          info.textContent = msg;
+          showToast('上传失败: ' + msg, true);
+        }
       };
       xhr.onerror = () => { task.classList.add('err'); pct.textContent = '❌ 失败'; info.textContent = '网络错误'; showToast('网络错误，上传失败', true); };
       xhr.send(fd);
