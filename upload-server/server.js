@@ -45,10 +45,15 @@ const html = `<!DOCTYPE html>
   .drop .btn { display:inline-block; margin-top:12px; background:#3d5afe; color:#fff; border:none; border-radius:8px;
                padding:10px 22px; font-size:14px; cursor:pointer; }
   input[type=file] { display:none; }
-  #progressWrap { display:none; margin-top:16px; }
-  .prog-row { display:flex; justify-content:space-between; font-size:12px; color:#aab2d8; margin-bottom:6px; }
-  .bar { height:8px; background:#262c4d; border-radius:6px; overflow:hidden; }
-  .bar > div { height:100%; width:0%; background:linear-gradient(90deg,#3d5afe,#00c6ff); border-radius:6px; transition:width .2s; }
+  #taskList { margin:16px 0 4px; }
+  .task { background:#141934; border-radius:10px; padding:10px 14px; margin-bottom:8px; }
+  .task .t-head { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#aab2d8; margin-bottom:6px; gap:10px; }
+  .task .t-name { word-break:break-all; }
+  .task .t-pct { flex-shrink:0; }
+  .task .bar { height:6px; background:#262c4d; border-radius:6px; overflow:hidden; }
+  .task .bar > div { height:100%; width:0%; background:linear-gradient(90deg,#3d5afe,#00c6ff); border-radius:6px; transition:width .2s; }
+  .task.done .bar > div { background:#0f9d58; }
+  .task.err .bar > div { background:#e53935; }
   #listTitle { margin:22px 0 10px; font-size:14px; color:#8b93b5; }
   #fileList { list-style:none; }
   #fileList li { display:flex; justify-content:space-between; align-items:center; background:#141934; border-radius:10px;
@@ -70,10 +75,7 @@ const html = `<!DOCTYPE html>
     <button class="btn" id="pickBtn">选择文件</button>
     <input type="file" id="fileInput" multiple>
   </div>
-  <div id="progressWrap">
-    <div class="prog-row"><span id="progName">上传中...</span><span id="progPct">0%</span></div>
-    <div class="bar"><div id="progBar"></div></div>
-  </div>
+  <div id="taskList"></div>
   <div id="listTitle">已上传文件</div>
   <ul id="fileList"></ul>
   <div class="tip">文件将保存在云端服务器的工作目录中</div>
@@ -83,10 +85,7 @@ const html = `<!DOCTYPE html>
   const drop = document.getElementById('drop');
   const input = document.getElementById('fileInput');
   const pickBtn = document.getElementById('pickBtn');
-  const progressWrap = document.getElementById('progressWrap');
-  const progBar = document.getElementById('progBar');
-  const progPct = document.getElementById('progPct');
-  const progName = document.getElementById('progName');
+  const taskList = document.getElementById('taskList');
   const fileList = document.getElementById('fileList');
   const toast = document.getElementById('toast');
 
@@ -112,31 +111,39 @@ const html = `<!DOCTYPE html>
     return (n/1073741824).toFixed(2) + ' GB';
   }
 
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
   function upload(files) {
     if (!files || !files.length) return;
     [...files].forEach((file) => {
+      const task = document.createElement('div');
+      task.className = 'task';
+      task.innerHTML = '<div class="t-head"><span class="t-name">📄 ' + escapeHtml(file.name) + '</span><span class="t-pct">0%</span></div><div class="bar"><div></div></div>';
+      taskList.prepend(task);
+      const bar = task.querySelector('.bar > div');
+      const pct = task.querySelector('.t-pct');
       const fd = new FormData();
       fd.append('file', file);
       const xhr = new XMLHttpRequest();
-      progressWrap.style.display = 'block';
       xhr.open('POST', '/upload');
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
           const p = Math.round(e.loaded / e.total * 100);
-          progBar.style.width = p + '%';
-          progPct.textContent = p + '%';
+          bar.style.width = p + '%';
+          pct.textContent = p + '%';
         }
       };
       xhr.onload = () => {
-        progBar.style.width = '100%'; progPct.textContent = '100%';
+        bar.style.width = '100%';
         try {
           const r = JSON.parse(xhr.responseText);
-          if (r.ok) { showToast('✅ ' + file.name + ' 上传成功'); refresh(); }
-          else showToast('上传失败: ' + (r.error || '未知错误'), true);
-        } catch(err) { showToast('上传失败', true); }
-        setTimeout(() => { progressWrap.style.display = 'none'; progBar.style.width = '0%'; progPct.textContent = '0%'; }, 1200);
+          if (r.ok) { task.classList.add('done'); pct.textContent = '✅ 完成'; showToast('✅ ' + file.name + ' 上传成功'); refresh(); }
+          else { task.classList.add('err'); pct.textContent = '❌ 失败'; showToast('上传失败: ' + (r.error || '未知错误'), true); }
+        } catch(err) { task.classList.add('err'); pct.textContent = '❌ 失败'; showToast('上传失败', true); }
       };
-      xhr.onerror = () => { showToast('网络错误，上传失败', true); };
+      xhr.onerror = () => { task.classList.add('err'); pct.textContent = '❌ 失败'; showToast('网络错误，上传失败', true); };
       xhr.send(fd);
     });
   }
