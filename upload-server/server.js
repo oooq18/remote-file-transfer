@@ -50,6 +50,7 @@ const html = `<!DOCTYPE html>
   .task .t-head { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#aab2d8; margin-bottom:6px; gap:10px; }
   .task .t-name { word-break:break-all; }
   .task .t-pct { flex-shrink:0; }
+  .task .t-info { font-size:11px; color:#7c86ad; margin-top:5px; }
   .task .bar { height:6px; background:#262c4d; border-radius:6px; overflow:hidden; }
   .task .bar > div { height:100%; width:0%; background:linear-gradient(90deg,#3d5afe,#00c6ff); border-radius:6px; transition:width .2s; }
   .task.done .bar > div { background:#0f9d58; }
@@ -115,35 +116,72 @@ const html = `<!DOCTYPE html>
     return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  function fmtSpeed(bps) {
+    if (!isFinite(bps) || bps <= 0) return '-- MB/s';
+    const mbps = bps / 1048576;
+    if (mbps >= 1) return mbps.toFixed(1) + ' MB/s';
+    const kbps = bps / 1024;
+    if (kbps >= 1) return kbps.toFixed(0) + ' KB/s';
+    return bps.toFixed(0) + ' B/s';
+  }
+
+  function fmtTime(sec) {
+    if (!isFinite(sec) || sec < 0 || sec > 86400) return '--';
+    if (sec < 60) return Math.ceil(sec) + ' 秒';
+    const m = Math.floor(sec / 60);
+    const s = Math.ceil(sec % 60);
+    return m + ' 分 ' + s + ' 秒';
+  }
+
   function upload(files) {
     if (!files || !files.length) return;
     [...files].forEach((file) => {
       const task = document.createElement('div');
       task.className = 'task';
-      task.innerHTML = '<div class="t-head"><span class="t-name">📄 ' + escapeHtml(file.name) + '</span><span class="t-pct">0%</span></div><div class="bar"><div></div></div>';
+      task.innerHTML = '<div class="t-head"><span class="t-name">📄 ' + escapeHtml(file.name) + '</span><span class="t-pct">0%</span></div><div class="bar"><div></div></div><div class="t-info">连接中...</div>';
       taskList.prepend(task);
       const bar = task.querySelector('.bar > div');
       const pct = task.querySelector('.t-pct');
+      const info = task.querySelector('.t-info');
       const fd = new FormData();
       fd.append('file', file);
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/upload');
+      let lastLoaded = 0;
+      let lastTime = 0;
+      let speed = 0;
       xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const p = Math.round(e.loaded / e.total * 100);
-          bar.style.width = p + '%';
-          pct.textContent = p + '%';
+        if (!e.lengthComputable) return;
+        const p = Math.round(e.loaded / e.total * 100);
+        bar.style.width = p + '%';
+        pct.textContent = p + '%';
+        const now = Date.now();
+        if (lastTime) {
+          const dt = (now - lastTime) / 1000;
+          if (dt > 0.15) {
+            const inst = (e.loaded - lastLoaded) / dt;
+            speed = speed ? speed * 0.6 + inst * 0.4 : inst;
+            lastLoaded = e.loaded;
+            lastTime = now;
+          }
+        } else {
+          lastLoaded = e.loaded;
+          lastTime = now;
+        }
+        if (speed > 0) {
+          const remain = (e.total - e.loaded) / speed;
+          info.textContent = fmtSpeed(speed) + ' · 预计还需 ' + fmtTime(remain);
         }
       };
       xhr.onload = () => {
         bar.style.width = '100%';
         try {
           const r = JSON.parse(xhr.responseText);
-          if (r.ok) { task.classList.add('done'); pct.textContent = '✅ 完成'; showToast('✅ ' + file.name + ' 上传成功'); refresh(); }
-          else { task.classList.add('err'); pct.textContent = '❌ 失败'; showToast('上传失败: ' + (r.error || '未知错误'), true); }
-        } catch(err) { task.classList.add('err'); pct.textContent = '❌ 失败'; showToast('上传失败', true); }
+          if (r.ok) { task.classList.add('done'); pct.textContent = '✅ 完成'; info.textContent = '已上传 ' + fmtSize(file.size); showToast('✅ ' + file.name + ' 上传成功'); refresh(); }
+          else { task.classList.add('err'); pct.textContent = '❌ 失败'; info.textContent = r.error || '未知错误'; showToast('上传失败: ' + (r.error || '未知错误'), true); }
+        } catch(err) { task.classList.add('err'); pct.textContent = '❌ 失败'; info.textContent = '解析错误'; showToast('上传失败', true); }
       };
-      xhr.onerror = () => { task.classList.add('err'); pct.textContent = '❌ 失败'; showToast('网络错误，上传失败', true); };
+      xhr.onerror = () => { task.classList.add('err'); pct.textContent = '❌ 失败'; info.textContent = '网络错误'; showToast('网络错误，上传失败', true); };
       xhr.send(fd);
     });
   }
