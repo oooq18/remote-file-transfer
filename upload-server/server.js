@@ -93,11 +93,11 @@ const html = `<!DOCTYPE html>
   <div id="taskList"></div>
   <div id="listTitle">已上传文件</div>
   <ul id="fileList"></ul>
-  <div class="tip">超过 95MB 的文件将自动分片上传并自动合并，无需手动操作</div>
+  <div class="tip">超过 10MB 的文件将自动分片上传并自动合并，无需手动操作</div>
 </div>
 <div id="toast"></div>
 <script>
-  const CHUNK_LIMIT = 30 * 1024 * 1024; // 单片上限 30MB（隧道慢且Cloudflare有100秒超时，小片更稳）
+  const CHUNK_LIMIT = 15 * 1024 * 1024; // 单片 15MB
   const drop = document.getElementById('drop');
   const input = document.getElementById('fileInput');
   const pickBtn = document.getElementById('pickBtn');
@@ -226,10 +226,11 @@ const html = `<!DOCTYPE html>
     const pct = task.querySelector('.t-pct');
     const chunkTag = task.querySelector('.t-chunk');
     const info = task.querySelector('.t-info');
-    const fileId = uuid();
+    // 固定fileId，直接用resume_new，对应已经传了75片的目录
+    const fileId = 'resume_new';
     const total = Math.ceil(file.size / CHUNK_LIMIT);
-    const CONCURRENCY = 4; // 同时传输的路数
-    const MAX_ATTEMPTS = 3; // 单片失败自动重试次数
+    const CONCURRENCY = 1; // 单线程
+    const MAX_ATTEMPTS = 10; // 单片失败自动重试次数
     const activeLoaded = {};
     let doneBytes = 0;      // 已完成的字节数
     let nextIdx = 0;
@@ -303,12 +304,32 @@ const html = `<!DOCTYPE html>
 
     (async () => {
       chunkTag.textContent = '并发 ' + Math.min(CONCURRENCY, total) + ' 路分片传输中';
+      // 先查询已完成的分片
+      info.textContent = '检查已上传的分片...';
+      const checkRes = await fetch('/check?fileId=' + encodeURIComponent(fileId));
+      const checkData = await checkRes.json();
+      const doneSet = new Set(checkData.doneChunks || []);
+      doneBytes = doneSet.size * CHUNK_LIMIT;
+      // 最后一片可能不是满的，修正
+      let lastFullChunks = Math.floor((file.size - 1) / CHUNK_LIMIT);
+      let realDone = 0;
+      for (let i = 0; i < total; i++) {
+        if (doneSet.has(i)) {
+          realDone += Math.min(CHUNK_LIMIT, file.size - i * CHUNK_LIMIT);
+        }
+      }
+      doneBytes = realDone;
+      if (doneSet.size > 0) info.textContent = '发现已上传 ' + doneSet.size + ' 片，从断点继续...';
+      updateProgress();
       const workers = [];
       const run = async () => {
         while (true) {
+          // 找下一个没传的分片
+          while (nextIdx < total && doneSet.has(nextIdx)) nextIdx++;
           const i = nextIdx++;
           if (i >= total) return;
           await uploadOne(i);
+          doneSet.add(i);
         }
       };
       const n = Math.min(CONCURRENCY, total);
@@ -360,6 +381,18 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
+    return;
+  }
+
+  // 查询已上传的分片
+  if (req.method === 'GET' && url.pathname === '/check') {
+    const fileId = String(url.searchParams.get('fileId') || '').replace(/[^a-zA-Z0-9-_]/g, '');
+    const partDir = path.join(PARTS_DIR, fileId);
+    let chunks = [];
+    try {
+      chunks = fs.readdirSync(partDir).filter((n) => n.startsWith('chunk_')).map(n => parseInt(n.replace('chunk_', ''), 10));
+    } catch (e) {}
+    writeJson(res, 200, { ok: true, doneChunks: chunks });
     return;
   }
 
