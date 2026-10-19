@@ -80,7 +80,6 @@ const html = `<!DOCTYPE html>
 <meta name="referrer" content="no-referrer">
 <title>远程传送</title>
 <style>
-<style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
          background:#0f1222; color:#e8eaf6; min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
@@ -115,7 +114,6 @@ const html = `<!DOCTYPE html>
            border-radius:10px; font-size:14px; display:none; z-index:99; box-shadow:0 6px 20px rgba(0,0,0,.3); }
   #toast.err { background:#e53935; }
   .tip { text-align:center; color:#5a6287; font-size:12px; margin-top:18px; }
-</style>
   #keyBox { display:none; background:#141934; border-radius:12px; padding:16px; margin-bottom:16px; text-align:center; }
   #keyBox p { color:#aab2d8; font-size:13px; margin-bottom:10px; }
   #keyBox input { width:65%; padding:9px 12px; border-radius:8px; border:1px solid #3d4773; background:#0f1222; color:#e8eaf6; font-size:14px; }
