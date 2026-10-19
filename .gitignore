@@ -2,3 +2,5 @@ node_modules/
 .tools/
 *.log
 uploads/
+.upload_key
+.public_url
