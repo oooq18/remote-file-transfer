@@ -110,6 +110,45 @@ const html = `<!DOCTYPE html>
   #fileList li { display:flex; justify-content:space-between; align-items:center; background:#141934; border-radius:10px;
                  padding:10px 14px; margin-bottom:8px; font-size:13px; word-break:break-all; }
   #fileList li .meta { color:#8b93b5; font-size:12px; white-space:nowrap; margin-left:12px; flex-shrink:0; }
+  #fileList li .dl-btn { flex-shrink:0; margin-left:10px; background:#2a3566; color:#aab2d8; border:1px solid #3d4773;
+                         border-radius:7px; padding:5px 12px; font-size:12px; cursor:pointer; transition:all .15s; }
+  #fileList li .dl-btn:hover { background:#3d5afe; color:#fff; border-color:#3d5afe; }
+  #fileList li .dl-btn:disabled { opacity:.5; cursor:not-allowed; }
+  .dl-task { background:#141934; border-radius:10px; padding:10px 14px; margin-bottom:8px; }
+  .dl-task .t-head { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#aab2d8; margin-bottom:6px; gap:10px; }
+  .dl-task .t-name { word-break:break-all; }
+  .dl-task .t-pct { flex-shrink:0; }
+  .dl-task .bar { height:6px; background:#262c4d; border-radius:6px; overflow:hidden; }
+  .dl-task .bar > div { height:100%; width:0%; background:linear-gradient(90deg,#00c6ff,#3d5afe); border-radius:6px; transition:width .2s; }
+  .dl-task.done .bar > div { background:#0f9d58; }
+  .dl-task.err .bar > div { background:#e53935; }
+  .dl-task .t-info { font-size:11px; color:#7c86ad; margin-top:5px; }
+  .divider { text-align:center; color:#5a6287; font-size:12px; margin:22px 0 14px; position:relative; }
+  .divider::before, .divider::after { content:''; position:absolute; top:50%; width:30%; height:1px; background:#2a3055; }
+  .divider::before { left:0; } .divider::after { right:0; }
+  .split-tool { background:#141934; border-radius:14px; padding:18px; }
+  .split-title { font-size:16px; text-align:center; margin-bottom:14px; color:#c5cae9; }
+  .split-tabs { display:flex; gap:8px; margin-bottom:14px; }
+  .split-tab { flex:1; background:#1a1f3a; color:#8b93b5; border:1px solid #2a3055; border-radius:8px; padding:8px; font-size:13px; cursor:pointer; transition:all .15s; }
+  .split-tab.active { background:#3d5afe; color:#fff; border-color:#3d5afe; }
+  .split-drop { border:2px dashed #3d4773; border-radius:12px; padding:24px 12px; text-align:center; cursor:pointer; transition:all .2s; background:#0f1222; }
+  .split-drop:hover, .split-drop.over { border-color:#5b8cff; background:#182042; }
+  .split-drop .icon { font-size:32px; margin-bottom:6px; }
+  .split-drop p { color:#aab2d8; font-size:13px; margin-bottom:10px; }
+  .split-config { margin-top:14px; }
+  .split-file-info, .merge-file-info { background:#1a1f3a; border-radius:8px; padding:10px 12px; font-size:13px; color:#aab2d8; margin-bottom:12px; word-break:break-all; }
+  .split-size-row { display:flex; align-items:center; gap:8px; margin-bottom:12px; font-size:13px; color:#aab2d8; flex-wrap:wrap; }
+  .split-size-row select, .split-size-row input { background:#0f1222; color:#e8eaf6; border:1px solid #3d4773; border-radius:6px; padding:6px 10px; font-size:13px; }
+  .split-size-row input { width:80px; }
+  .split-start, .dl-all-btn { width:100%; background:#3d5afe; color:#fff; border:none; border-radius:8px; padding:10px; font-size:14px; cursor:pointer; margin-top:8px; }
+  .split-start:disabled { opacity:.5; cursor:not-allowed; }
+  .split-result-title { font-size:13px; color:#aab2d8; margin:14px 0 8px; }
+  .split-list { list-style:none; max-height:220px; overflow-y:auto; }
+  .split-list li { display:flex; justify-content:space-between; align-items:center; background:#1a1f3a; border-radius:8px; padding:8px 12px; margin-bottom:6px; font-size:12px; }
+  .split-list li .meta { color:#8b93b5; flex-shrink:0; margin-left:8px; }
+  .split-list li button { background:#2a3566; color:#aab2d8; border:1px solid #3d4773; border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer; flex-shrink:0; margin-left:8px; }
+  .split-list li button:hover { background:#3d5afe; color:#fff; }
+  .split-list li .sname { word-break:break-all; flex:1; }
   #toast { position:fixed; top:18px; left:50%; transform:translateX(-50%); background:#0f9d58; color:#fff; padding:10px 20px;
            border-radius:10px; font-size:14px; display:none; z-index:99; box-shadow:0 6px 20px rgba(0,0,0,.3); }
   #toast.err { background:#e53935; }
@@ -135,9 +174,65 @@ const html = `<!DOCTYPE html>
     <input type="file" id="fileInput" multiple>
   </div>
   <div id="taskList"></div>
+  <div id="dlTaskList"></div>
   <div id="listTitle">已上传文件</div>
   <ul id="fileList"></ul>
   <div class="tip">超过 15MB 的文件将自动分片上传并自动合并，支持断点续传；单片失败自动重试，最多尝试 10 次</div>
+  <div class="divider">本地文件分割 / 合并工具</div>
+  <div class="split-tool">
+    <div class="split-title">✂️ 文件分割与合并</div>
+    <div class="split-tabs">
+      <button class="split-tab active" data-tab="split">分割文件</button>
+      <button class="split-tab" data-tab="merge">合并分片</button>
+    </div>
+    <div class="split-panel" id="splitPanel">
+      <div class="split-drop" id="splitDrop">
+        <div class="icon">✂️</div>
+        <p>选择要分割的本地文件（纯本地处理，不上传）</p>
+        <button class="btn" id="splitPickBtn">选择文件</button>
+        <input type="file" id="splitInput">
+      </div>
+      <div class="split-config" id="splitConfig" style="display:none">
+        <div class="split-file-info" id="splitFileInfo"></div>
+        <div class="split-size-row">
+          <span>每片大小：</span>
+          <select id="splitSize">
+            <option value="5242880">5 MB</option>
+            <option value="10485760" selected>10 MB</option>
+            <option value="52428800">50 MB</option>
+            <option value="104857600">100 MB</option>
+            <option value="custom">自定义</option>
+          </select>
+          <input type="number" id="splitCustomSize" style="display:none" placeholder="MB" min="1">
+          <span style="color:#5a6287;font-size:12px" id="splitPreview"></span>
+        </div>
+        <button class="split-start" id="splitStartBtn">开始分割</button>
+      </div>
+      <div id="splitProgress" style="display:none;margin-top:14px">
+        <div class="dl-task"><div class="t-head"><span class="t-name" id="splitTaskName"></span><span class="t-pct" id="splitTaskPct">0%</span></div><div class="bar"><div></div></div><div class="t-info" id="splitTaskInfo">准备中...</div></div>
+      </div>
+      <div id="splitResult" style="display:none">
+        <div class="split-result-title">分割完成，共 <span id="splitCount"></span> 片：</div>
+        <button class="dl-all-btn" id="dlAllBtn">⬇️ 全部下载</button>
+        <ul class="split-list" id="splitList"></ul>
+      </div>
+    </div>
+    <div class="split-panel" id="mergePanel" style="display:none">
+      <div class="split-drop" id="mergeDrop">
+        <div class="icon">🔗</div>
+        <p>选择要合并的分片文件（可多选，按文件名排序）</p>
+        <button class="btn" id="mergePickBtn">选择分片</button>
+        <input type="file" id="mergeInput" multiple>
+      </div>
+      <div class="split-config" id="mergeConfig" style="display:none">
+        <div class="merge-file-info" id="mergeFileInfo"></div>
+        <button class="split-start" id="mergeStartBtn">开始合并</button>
+      </div>
+      <div id="mergeResult" style="display:none;margin-top:14px">
+        <button class="dl-all-btn" id="mergeDlBtn">⬇️ 下载合并后的文件</button>
+      </div>
+    </div>
+  </div>
 </div>
 <div id="toast"></div>
 <script>
@@ -454,11 +549,297 @@ const html = `<!DOCTYPE html>
       if (!list.length) { fileList.innerHTML = '<li style="color:#5a6287">暂无文件</li>'; return; }
       list.forEach(f => {
         const li = document.createElement('li');
-        li.innerHTML = '<span>📄 ' + escapeHtml(f.name) + '</span><span class="meta">' + fmtSize(f.size) + '</span>';
+        li.innerHTML = '<span>📄 ' + escapeHtml(f.name) + '</span>' +
+          '<span style="display:flex;align-items:center;flex-shrink:0">' +
+          '<span class="meta">' + fmtSize(f.size) + '</span>' +
+          '<button class="dl-btn" data-name="' + encodeURIComponent(f.name) + '">下载</button>' +
+          '</span>';
+        li.querySelector('.dl-btn').onclick = () => downloadFile(f.name, f.size);
         fileList.appendChild(li);
       });
     }).catch(() => {});
   }
+  const dlTaskList = document.getElementById('dlTaskList');
+  const DL_CHUNK = 10 * 1024 * 1024; // 下载每片 10MB
+  const DL_MAX_ATTEMPTS = 10;
+
+  function makeDlTask(name) {
+    const task = document.createElement('div');
+    task.className = 'dl-task';
+    task.innerHTML = '<div class="t-head"><span class="t-name">⬇️ ' + escapeHtml(name) + '</span><span class="t-pct">0%</span></div>' +
+      '<div class="bar"><div></div></div><div class="t-info">准备下载...</div>';
+    dlTaskList.prepend(task);
+    return task;
+  }
+
+  function saveBlob(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  // 分段下载大文件，支持断点续传
+  function downloadFile(name, totalSize) {
+    const task = makeDlTask(name);
+    const bar = task.querySelector('.bar > div');
+    const pct = task.querySelector('.t-pct');
+    const info = task.querySelector('.t-info');
+    const parts = [];
+    let downloaded = 0;
+    let lastBytes = 0, lastTime = 0, speed = 0;
+
+    function updateDlProgress() {
+      const p = Math.round(downloaded / totalSize * 100);
+      bar.style.width = p + '%';
+      pct.textContent = p + '%';
+      const now = Date.now();
+      if (lastTime) {
+        const dt = (now - lastTime) / 1000;
+        if (dt > 0.2) {
+          const inst = (downloaded - lastBytes) / dt;
+          speed = speed ? speed * 0.6 + inst * 0.4 : inst;
+          lastBytes = downloaded;
+          lastTime = now;
+        }
+      } else { lastBytes = downloaded; lastTime = now; }
+      if (speed > 0) info.textContent = fmtSpeed(speed) + ' · 预计还需 ' + fmtTime((totalSize - downloaded) / speed);
+    }
+
+    function dlRange(start, end, attempt) {
+      return new Promise((resolve, reject) => {
+        fetch('/download?name=' + encodeURIComponent(name), {
+          headers: Object.assign(authHeaders(), { 'Range': 'bytes=' + start + '-' + end })
+        }).then(r => {
+          if (r.status === 401) { askKey('密钥错误或已失效，请重新输入'); reject(new Error('访问密钥无效')); return; }
+          if (r.status !== 206 && r.status !== 200) { reject(new Error('HTTP ' + r.status)); return; }
+          return r.arrayBuffer();
+        }).then(buf => {
+          if (buf) resolve(buf);
+        }).catch(err => {
+          if (attempt < DL_MAX_ATTEMPTS) {
+            info.textContent = '分片下载失败(' + (err.message || '网络错误') + ')，第 ' + (attempt + 1) + '/' + DL_MAX_ATTEMPTS + ' 次重试...';
+            setTimeout(() => dlRange(start, end, attempt + 1).then(resolve).catch(reject), 1200);
+          } else {
+            reject(new Error('分片下载失败: ' + (err.message || '网络错误')));
+          }
+        });
+      });
+    }
+
+    (async () => {
+      info.textContent = '开始下载...';
+      if (totalSize <= DL_CHUNK) {
+        const buf = await dlRange(0, totalSize - 1, 1);
+        downloaded = totalSize;
+        updateDlProgress();
+        saveBlob(new Blob([buf]), name);
+        task.classList.add('done');
+        pct.textContent = '✅ 完成';
+        info.textContent = '已保存 ' + fmtSize(totalSize);
+        showToast('✅ ' + name + ' 下载完成');
+        return;
+      }
+      const total = Math.ceil(totalSize / DL_CHUNK);
+      for (let i = 0; i < total; i++) {
+        const start = i * DL_CHUNK;
+        const end = Math.min(start + DL_CHUNK - 1, totalSize - 1);
+        info.textContent = '下载分片 ' + (i + 1) + '/' + total + '...';
+        const buf = await dlRange(start, end, 1);
+        parts.push(buf);
+        downloaded += buf.byteLength;
+        updateDlProgress();
+      }
+      saveBlob(new Blob(parts), name);
+      task.classList.add('done');
+      pct.textContent = '✅ 完成';
+      info.textContent = '已保存 ' + fmtSize(totalSize) + '（共 ' + total + ' 片）';
+      showToast('✅ ' + name + ' 下载完成');
+    })().catch(err => {
+      task.classList.add('err');
+      pct.textContent = '❌ 失败';
+      info.textContent = (err.message || '下载失败') + '（已下载 ' + fmtSize(downloaded) + '，可重新点击下载继续）';
+      showToast('下载失败: ' + (err.message || ''), true);
+    });
+  }
+
+  // ========== 文件分割 / 合并工具 ==========
+  let splitFile = null;
+  let splitBlobs = [];
+  let mergeBlob = null;
+
+  // Tab 切换
+  document.querySelectorAll('.split-tab').forEach(tab => {
+    tab.onclick = () => {
+      document.querySelectorAll('.split-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.getElementById('splitPanel').style.display = tab.dataset.tab === 'split' ? 'block' : 'none';
+      document.getElementById('mergePanel').style.display = tab.dataset.tab === 'merge' ? 'block' : 'none';
+    };
+  });
+
+  // 分割：选择文件
+  const splitDrop = document.getElementById('splitDrop');
+  const splitInput = document.getElementById('splitInput');
+  document.getElementById('splitPickBtn').onclick = (e) => { e.stopPropagation(); splitInput.click(); };
+  splitDrop.onclick = () => splitInput.click();
+  splitDrop.ondragover = (e) => { e.preventDefault(); splitDrop.classList.add('over'); };
+  splitDrop.ondragleave = () => splitDrop.classList.remove('over');
+  splitDrop.ondrop = (e) => { e.preventDefault(); splitDrop.classList.remove('over'); if (e.dataTransfer.files[0]) pickSplitFile(e.dataTransfer.files[0]); };
+  splitInput.onchange = () => { if (splitInput.files[0]) pickSplitFile(splitInput.files[0]); splitInput.value = ''; };
+
+  function pickSplitFile(file) {
+    splitFile = file;
+    splitBlobs = [];
+    document.getElementById('splitConfig').style.display = 'block';
+    document.getElementById('splitProgress').style.display = 'none';
+    document.getElementById('splitResult').style.display = 'none';
+    document.getElementById('splitFileInfo').textContent = '📄 ' + file.name + '（' + fmtSize(file.size) + '）';
+    updateSplitPreview();
+  }
+
+  const splitSizeSel = document.getElementById('splitSize');
+  const splitCustomInput = document.getElementById('splitCustomSize');
+  splitSizeSel.onchange = () => {
+    splitCustomInput.style.display = splitSizeSel.value === 'custom' ? 'inline-block' : 'none';
+    updateSplitPreview();
+  };
+  splitCustomInput.oninput = updateSplitPreview;
+
+  function getSplitSize() {
+    if (splitSizeSel.value === 'custom') {
+      const mb = parseFloat(splitCustomInput.value);
+      return isNaN(mb) || mb <= 0 ? 0 : mb * 1024 * 1024;
+    }
+    return parseInt(splitSizeSel.value, 10);
+  }
+
+  function updateSplitPreview() {
+    const sz = getSplitSize();
+    const el = document.getElementById('splitPreview');
+    if (!sz || !splitFile) { el.textContent = ''; return; }
+    const n = Math.ceil(splitFile.size / sz);
+    el.textContent = '→ 共 ' + n + ' 片';
+  }
+
+  // 开始分割
+  document.getElementById('splitStartBtn').onclick = () => {
+    if (!splitFile) return;
+    const sz = getSplitSize();
+    if (!sz) { showToast('请设置有效的分片大小', true); return; }
+    const total = Math.ceil(splitFile.size / sz);
+    const progress = document.getElementById('splitProgress');
+    const bar = progress.querySelector('.bar > div');
+    const pct = progress.querySelector('.t-pct');
+    const info = progress.querySelector('.t-info');
+    document.getElementById('splitTaskName').textContent = '✂️ ' + splitFile.name;
+    progress.style.display = 'block';
+    document.getElementById('splitResult').style.display = 'none';
+    splitBlobs = [];
+
+    (async () => {
+      for (let i = 0; i < total; i++) {
+        const start = i * sz;
+        const end = Math.min(start + sz, splitFile.size);
+        const blob = splitFile.slice(start, end);
+        splitBlobs.push(blob);
+        const done = end;
+        const p = Math.round(done / splitFile.size * 100);
+        bar.style.width = p + '%';
+        pct.textContent = p + '%';
+        info.textContent = '分割中 ' + (i + 1) + '/' + total + '（' + fmtSize(blob.size) + '）';
+        await new Promise(r => setTimeout(r, 10));
+      }
+      // 生成分片列表
+      const list = document.getElementById('splitList');
+      list.innerHTML = '';
+      const baseName = splitFile.name;
+      const pad = String(total).length;
+      splitBlobs.forEach((blob, i) => {
+        const partName = baseName + '.part' + String(i + 1).padStart(pad, '0') + '-' + total;
+        const li = document.createElement('li');
+        li.innerHTML = '<span class="sname">' + escapeHtml(partName) + '</span><span class="meta">' + fmtSize(blob.size) + '</span>';
+        const btn = document.createElement('button');
+        btn.textContent = '下载';
+        btn.onclick = () => saveBlob(blob, partName);
+        li.appendChild(btn);
+        list.appendChild(li);
+      });
+      document.getElementById('splitCount').textContent = total;
+      document.getElementById('splitResult').style.display = 'block';
+      progress.querySelector('.dl-task').classList.add('done');
+      pct.textContent = '✅ 完成';
+      info.textContent = '分割完成，共 ' + total + ' 片';
+      showToast('✅ 分割完成');
+    })().catch(err => {
+      showToast('分割失败: ' + (err.message || ''), true);
+    });
+  };
+
+  // 全部下载
+  document.getElementById('dlAllBtn').onclick = () => {
+    splitBlobs.forEach((blob, i) => {
+      const total = splitBlobs.length;
+      const pad = String(total).length;
+      const partName = splitFile.name + '.part' + String(i + 1).padStart(pad, '0') + '-' + total;
+      setTimeout(() => saveBlob(blob, partName), i * 300);
+    });
+  };
+
+  // 合并：选择分片
+  let mergeFiles = [];
+  const mergeDrop = document.getElementById('mergeDrop');
+  const mergeInput = document.getElementById('mergeInput');
+  document.getElementById('mergePickBtn').onclick = (e) => { e.stopPropagation(); mergeInput.click(); };
+  mergeDrop.onclick = () => mergeInput.click();
+  mergeDrop.ondragover = (e) => { e.preventDefault(); mergeDrop.classList.add('over'); };
+  mergeDrop.ondragleave = () => mergeDrop.classList.remove('over');
+  mergeDrop.ondrop = (e) => { e.preventDefault(); mergeDrop.classList.remove('over'); if (e.dataTransfer.files.length) pickMergeFiles(e.dataTransfer.files); };
+  mergeInput.onchange = () => { if (mergeInput.files.length) pickMergeFiles(mergeInput.files); mergeInput.value = ''; };
+
+  function pickMergeFiles(files) {
+    mergeFiles = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+    let total = 0;
+    mergeFiles.forEach(f => total += f.size);
+    document.getElementById('mergeConfig').style.display = 'block';
+    document.getElementById('mergeResult').style.display = 'none';
+    document.getElementById('mergeFileInfo').innerHTML = '已选择 ' + mergeFiles.length + ' 个分片，总计 ' + fmtSize(total) + '<br>' +
+      mergeFiles.map(f => '• ' + escapeHtml(f.name)).join('<br>');
+  }
+
+  // 开始合并
+  document.getElementById('mergeStartBtn').onclick = () => {
+    if (!mergeFiles.length) return;
+    const btn = document.getElementById('mergeStartBtn');
+    btn.disabled = true;
+    btn.textContent = '合并中...';
+    (async () => {
+      const parts = [];
+      for (let i = 0; i < mergeFiles.length; i++) {
+        const buf = await mergeFiles[i].arrayBuffer();
+        parts.push(buf);
+      }
+      mergeBlob = new Blob(parts);
+      // 尝试从第一个分片名还原原始文件名
+      let origName = mergeFiles[0].name.replace(/\.part\d+-\d+$/, '');
+      if (origName === mergeFiles[0].name) origName = 'merged_' + origName;
+      const dlBtn = document.getElementById('mergeDlBtn');
+      dlBtn.onclick = () => saveBlob(mergeBlob, origName);
+      document.getElementById('mergeResult').style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = '开始合并';
+      showToast('✅ 合并完成（' + fmtSize(mergeBlob.size) + '）');
+    })().catch(err => {
+      btn.disabled = false;
+      btn.textContent = '开始合并';
+      showToast('合并失败: ' + (err.message || ''), true);
+    });
+  };
+
   verifyKey();
   setInterval(() => { if (keyBox.style.display !== 'block') refresh(); }, 8000);
 </script>
@@ -683,6 +1064,50 @@ function handleMerge(req, res) {
   });
 }
 
+// 分段下载文件（支持 HTTP Range，支持断点续传）
+function handleDownload(req, res, url) {
+  const name = safeName(url.searchParams.get('name') || '');
+  if (!name) { writeJson(res, 400, { ok: false, error: '缺少文件名' }); return; }
+  const filePath = path.join(UPLOAD_DIR, name);
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    writeJson(res, 404, { ok: false, error: '文件不存在' }); return;
+  }
+  let stat;
+  try { stat = fs.statSync(filePath); } catch (e) { writeJson(res, 500, { ok: false, error: '读取文件失败' }); return; }
+  const total = stat.size;
+  const range = req.headers.range;
+  const encodedName = encodeURIComponent(name);
+  const baseHeaders = {
+    'Content-Type': 'application/octet-stream',
+    'Content-Disposition': 'attachment; filename="' + encodedName + '"; filename*=UTF-8\'\'' + encodedName,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-store',
+  };
+  if (range) {
+    const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+    if (!m) { res.writeHead(416, { 'Content-Range': 'bytes */' + total }); res.end(); return; }
+    let start = m[1] === '' ? null : parseInt(m[1], 10);
+    let end = m[2] === '' ? null : parseInt(m[2], 10);
+    if (start === null && end === null) { res.writeHead(416, { 'Content-Range': 'bytes */' + total }); res.end(); return; }
+    if (start === null) { start = Math.max(0, total - end); end = total - 1; }
+    if (end === null || end >= total) end = total - 1;
+    if (start > end || start >= total) { res.writeHead(416, { 'Content-Range': 'bytes */' + total }); res.end(); return; }
+    const length = end - start + 1;
+    res.writeHead(206, Object.assign(baseHeaders, {
+      'Content-Length': length,
+      'Content-Range': 'bytes ' + start + '-' + end + '/' + total,
+    }));
+    const stream = fs.createReadStream(filePath, { start, end });
+    stream.on('error', () => { try { res.destroy(); } catch (e) {} });
+    stream.pipe(res);
+  } else {
+    res.writeHead(200, Object.assign(baseHeaders, { 'Content-Length': total }));
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', () => { try { res.destroy(); } catch (e) {} });
+    stream.pipe(res);
+  }
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
 
@@ -718,6 +1143,12 @@ const server = http.createServer((req, res) => {
   // 文件列表
   if (req.method === 'GET' && url.pathname === '/files') {
     writeJson(res, 200, listFiles());
+    return;
+  }
+
+  // 分段下载文件（支持 Range / 断点续传）
+  if (req.method === 'GET' && url.pathname === '/download') {
+    handleDownload(req, res, url);
     return;
   }
 
