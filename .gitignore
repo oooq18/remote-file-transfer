@@ -4,3 +4,4 @@ node_modules/
 uploads/
 .upload_key
 .public_url
+shared/

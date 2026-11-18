@@ -7,6 +7,8 @@ const busboy = require('busboy');
 const PORT = process.env.PORT || 8765;
 const UPLOAD_DIR = path.join(__dirname, '..', 'uploads');
 const PARTS_DIR = path.join(UPLOAD_DIR, '.parts');
+// 反向传输：云端放在这里的文件，网页上可以直接下载到本机
+const SHARE_DIR = process.env.SHARE_DIR || path.join(__dirname, '..', 'shared');
 const MAX_FILE_SIZE = (parseInt(process.env.MAX_FILE_MB, 10) || 2048) * 1024 * 1024; // 单文件上限，默认 2GB（分片上传时为合并后的总大小）
 const MAX_CHUNK_SIZE = 100 * 1024 * 1024;     // 单个分片上限 100MB（前端默认 15MB 一片）
 const MAX_CHUNKS = 10000;
@@ -14,6 +16,7 @@ const UPLOAD_KEY = process.env.UPLOAD_KEY || ''; // 访问密钥，为空则不�
 
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 if (!fs.existsSync(PARTS_DIR)) fs.mkdirSync(PARTS_DIR, { recursive: true });
+if (!fs.existsSync(SHARE_DIR)) fs.mkdirSync(SHARE_DIR, { recursive: true });
 
 function safeName(name) {
   return String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 150) || 'unnamed';
@@ -41,6 +44,19 @@ function listFiles() {
     try { return fs.statSync(path.join(UPLOAD_DIR, name)).isFile(); } catch (e) { return false; }
   }).map((name) => {
     const st = fs.statSync(path.join(UPLOAD_DIR, name));
+    return { name, size: st.size, mtime: st.mtime.toISOString() };
+  }).sort((a, b) => b.mtime.localeCompare(a.mtime));
+}
+
+// 列出云端发往本机的文件（shared/ 目录）
+function listShared() {
+  let names = [];
+  try { names = fs.readdirSync(SHARE_DIR); } catch (e) { return []; }
+  return names.filter((name) => {
+    if (name.startsWith('.')) return false;
+    try { return fs.statSync(path.join(SHARE_DIR, name)).isFile(); } catch (e) { return false; }
+  }).map((name) => {
+    const st = fs.statSync(path.join(SHARE_DIR, name));
     return { name, size: st.size, mtime: st.mtime.toISOString() };
   }).sort((a, b) => b.mtime.localeCompare(a.mtime));
 }
@@ -106,14 +122,20 @@ const html = `<!DOCTYPE html>
   .task.done .bar > div { background:#0f9d58; }
   .task.err .bar > div { background:#e53935; }
   #listTitle { margin:22px 0 10px; font-size:14px; color:#8b93b5; }
-  #fileList { list-style:none; }
-  #fileList li { display:flex; justify-content:space-between; align-items:center; background:#141934; border-radius:10px;
+  #fileList, #shareList { list-style:none; }
+  #fileList li, #shareList li { display:flex; justify-content:space-between; align-items:center; background:#141934; border-radius:10px;
                  padding:10px 14px; margin-bottom:8px; font-size:13px; word-break:break-all; }
-  #fileList li .meta { color:#8b93b5; font-size:12px; white-space:nowrap; margin-left:12px; flex-shrink:0; }
-  #fileList li .dl-btn { flex-shrink:0; margin-left:10px; background:#2a3566; color:#aab2d8; border:1px solid #3d4773;
+  #fileList li .meta, #shareList li .meta { color:#8b93b5; font-size:12px; white-space:nowrap; margin-left:12px; flex-shrink:0; }
+  #fileList li .dl-btn, #shareList li .dl-btn { flex-shrink:0; margin-left:10px; background:#2a3566; color:#aab2d8; border:1px solid #3d4773;
                          border-radius:7px; padding:5px 12px; font-size:12px; cursor:pointer; transition:all .15s; }
-  #fileList li .dl-btn:hover { background:#3d5afe; color:#fff; border-color:#3d5afe; }
-  #fileList li .dl-btn:disabled { opacity:.5; cursor:not-allowed; }
+  #fileList li .dl-btn:hover, #shareList li .dl-btn:hover { background:#3d5afe; color:#fff; border-color:#3d5afe; }
+  #fileList li .dl-btn:disabled, #shareList li .dl-btn:disabled { opacity:.5; cursor:not-allowed; }
+  #shareHead { display:flex; justify-content:space-between; align-items:center; margin:22px 0 10px; }
+  #shareHead .st { font-size:14px; color:#8b93b5; }
+  #shareRefresh { background:#2a3566; color:#aab2d8; border:1px solid #3d4773; border-radius:7px; padding:4px 12px;
+                  font-size:12px; cursor:pointer; }
+  #shareRefresh:hover { background:#3d5afe; color:#fff; border-color:#3d5afe; }
+  #shareRefresh:disabled { opacity:.5; cursor:not-allowed; }
   .dl-task { background:#141934; border-radius:10px; padding:10px 14px; margin-bottom:8px; }
   .dl-task .t-head { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#aab2d8; margin-bottom:6px; gap:10px; }
   .dl-task .t-name { word-break:break-all; }
@@ -178,6 +200,12 @@ const html = `<!DOCTYPE html>
   <div id="listTitle">已上传文件</div>
   <ul id="fileList"></ul>
   <div class="tip">超过 15MB 的文件将自动分片上传并自动合并，支持断点续传；单片失败自动重试，最多尝试 10 次</div>
+  <div id="shareHead">
+    <span class="st">📥 我发给你的文件（云端 → 本机）</span>
+    <button id="shareRefresh">刷新</button>
+  </div>
+  <ul id="shareList"><li style="color:#5a6287">暂无文件</li></ul>
+  <div class="tip">云端放进 shared/ 目录的文件会出现在这里，点「下载」直接存到本机；大文件同样自动分段续传</div>
   <div class="divider">本地文件分割 / 合并工具</div>
   <div class="split-tool">
     <div class="split-title">✂️ 文件分割与合并</div>
@@ -289,7 +317,7 @@ const html = `<!DOCTYPE html>
 
   function verifyKey() {
     fetch('/auth', { headers: authHeaders() }).then(r => r.json()).then((r) => {
-      if (r && r.ok) { keyBox.style.display = 'none'; refresh(); }
+      if (r && r.ok) { keyBox.style.display = 'none'; refresh(); refreshShared(); }
       else askKey(accessKey ? '密钥错误，请重新输入' : '请输入访问密钥');
     }).catch(() => askKey('无法连接服务器'));
   }
@@ -559,6 +587,41 @@ const html = `<!DOCTYPE html>
       });
     }).catch(() => {});
   }
+
+  // 「云端 → 本机」文件列表：云端 shared/ 目录里的文件
+  const shareList = document.getElementById('shareList');
+  const shareRefreshBtn = document.getElementById('shareRefresh');
+
+  function fmtDateTime(iso) {
+    try {
+      const d = new Date(iso);
+      const p = (n) => String(n).padStart(2, '0');
+      return (d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    } catch (e) { return ''; }
+  }
+
+  function refreshShared() {
+    api('/shared').then(r => r.json()).then(list => {
+      if (!Array.isArray(list)) return;
+      shareList.innerHTML = '';
+      if (!list.length) { shareList.innerHTML = '<li style="color:#5a6287">暂无文件</li>'; return; }
+      list.forEach(f => {
+        const li = document.createElement('li');
+        li.innerHTML = '<span>📦 ' + escapeHtml(f.name) + '</span>' +
+          '<span style="display:flex;align-items:center;flex-shrink:0">' +
+          '<span class="meta">' + fmtSize(f.size) + ' · ' + fmtDateTime(f.mtime) + '</span>' +
+          '<button class="dl-btn">下载</button></span>';
+        li.querySelector('.dl-btn').onclick = () => downloadFile(f.name, f.size, '/shared/download');
+        shareList.appendChild(li);
+      });
+    }).catch(() => {});
+  }
+  shareRefreshBtn.onclick = () => {
+    shareRefreshBtn.disabled = true;
+    refreshShared();
+    setTimeout(() => { shareRefreshBtn.disabled = false; }, 600);
+  };
+
   const dlTaskList = document.getElementById('dlTaskList');
   const DL_CHUNK = 10 * 1024 * 1024; // 下载每片 10MB
   const DL_MAX_ATTEMPTS = 10;
@@ -584,7 +647,8 @@ const html = `<!DOCTYPE html>
   }
 
   // 分段下载大文件，支持断点续传
-  function downloadFile(name, totalSize) {
+  function downloadFile(name, totalSize, endpoint) {
+    const apiPath = endpoint || '/download';
     const task = makeDlTask(name);
     const bar = task.querySelector('.bar > div');
     const pct = task.querySelector('.t-pct');
@@ -612,7 +676,7 @@ const html = `<!DOCTYPE html>
 
     function dlRange(start, end, attempt) {
       return new Promise((resolve, reject) => {
-        fetch('/download?name=' + encodeURIComponent(name), {
+        fetch(apiPath + '?name=' + encodeURIComponent(name), {
           headers: Object.assign(authHeaders(), { 'Range': 'bytes=' + start + '-' + end })
         }).then(r => {
           if (r.status === 401) { askKey('密钥错误或已失效，请重新输入'); reject(new Error('访问密钥无效')); return; }
@@ -841,7 +905,7 @@ const html = `<!DOCTYPE html>
   };
 
   verifyKey();
-  setInterval(() => { if (keyBox.style.display !== 'block') refresh(); }, 8000);
+  setInterval(() => { if (keyBox.style.display !== 'block') { refresh(); refreshShared(); } }, 8000);
 </script>
 </body>
 </html>`;
@@ -1065,10 +1129,10 @@ function handleMerge(req, res) {
 }
 
 // 分段下载文件（支持 HTTP Range，支持断点续传）
-function handleDownload(req, res, url) {
+function handleDownload(req, res, url, baseDir) {
   const name = safeName(url.searchParams.get('name') || '');
   if (!name) { writeJson(res, 400, { ok: false, error: '缺少文件名' }); return; }
-  const filePath = path.join(UPLOAD_DIR, name);
+  const filePath = path.join(baseDir || UPLOAD_DIR, name);
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     writeJson(res, 404, { ok: false, error: '文件不存在' }); return;
   }
@@ -1143,6 +1207,18 @@ const server = http.createServer((req, res) => {
   // 文件列表
   if (req.method === 'GET' && url.pathname === '/files') {
     writeJson(res, 200, listFiles());
+    return;
+  }
+
+  // 云端发往本机的文件列表
+  if (req.method === 'GET' && url.pathname === '/shared') {
+    writeJson(res, 200, listShared());
+    return;
+  }
+
+  // 下载云端发往本机的文件（同样支持 Range / 断点续传）
+  if (req.method === 'GET' && url.pathname === '/shared/download') {
+    handleDownload(req, res, url, SHARE_DIR);
     return;
   }
 
