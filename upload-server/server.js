@@ -22,6 +22,20 @@ function safeName(name) {
   return String(name).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 150) || 'unnamed';
 }
 
+// shared/ 里重名时自动加序号，避免覆盖已有文件
+function uniqueSharedName(name) {
+  const safe = safeName(name);
+  let candidate = safe;
+  let i = 1;
+  const ext = path.extname(safe);
+  const base = ext ? safe.slice(0, -ext.length) : safe;
+  while (fs.existsSync(path.join(SHARE_DIR, candidate))) {
+    candidate = base + '-' + i + ext;
+    i += 1;
+  }
+  return candidate;
+}
+
 // 统一的分片 ID 清洗规则（/check、/upload、/merge 共用）
 function sanitizeId(id) {
   return String(id || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 64);
@@ -163,6 +177,14 @@ const html = `<!DOCTYPE html>
   .split-size-row select, .split-size-row input { background:#0f1222; color:#e8eaf6; border:1px solid #3d4773; border-radius:6px; padding:6px 10px; font-size:13px; }
   .split-size-row input { width:80px; }
   .split-start, .dl-all-btn { width:100%; background:#3d5afe; color:#fff; border:none; border-radius:8px; padding:10px; font-size:14px; cursor:pointer; margin-top:8px; }
+  .dl-all-btn.secondary { background:#2a3566; border:1px solid #3d4773; }
+  .dl-all-btn.secondary:hover { background:#3a4a86; }
+  .store-links { list-style:none; margin-top:10px; }
+  .store-links li { display:flex; align-items:center; gap:8px; background:#1a1f3a; border-radius:8px; padding:8px 12px; margin-bottom:6px; font-size:12px; }
+  .store-links li .sname { word-break:break-all; flex:1; }
+  .store-links li .meta { color:#8b93b5; flex-shrink:0; }
+  .store-links li button { background:#2a3566; color:#aab2d8; border:1px solid #3d4773; border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer; flex-shrink:0; }
+  .store-links li button:hover { background:#3d5afe; color:#fff; }
   .split-start:disabled { opacity:.5; cursor:not-allowed; }
   .split-result-title { font-size:13px; color:#aab2d8; margin:14px 0 8px; }
   .split-list { list-style:none; max-height:220px; overflow-y:auto; }
@@ -264,6 +286,11 @@ const html = `<!DOCTYPE html>
         <div id="zipResult" style="display:none">
           <div class="split-result-title">已生成 <span id="zipCount"></span> 个压缩包：</div>
           <button class="dl-all-btn" id="zipAllBtn">⬇️ 全部下载压缩包</button>
+          <button class="dl-all-btn secondary" id="zipStoreBtn" style="margin-top:8px">☁️ 存到服务器（生成可下载链接）</button>
+          <div id="zipStoreResult" style="display:none">
+            <div class="split-result-title">已存入服务器，任何设备都能下载：</div>
+            <ul class="store-links" id="zipStoreList"></ul>
+          </div>
           <ul class="split-list" id="zipList"></ul>
         </div>
       </div>
@@ -914,6 +941,21 @@ const html = `<!DOCTYPE html>
     btn.textContent = '下载';
     btn.onclick = () => saveBlob(blob, name);
     li.appendChild(btn);
+    const sbtn = document.createElement('button');
+    sbtn.textContent = '☁️ 存档';
+    sbtn.onclick = async () => {
+      sbtn.disabled = true;
+      try {
+        const j = await storeZipToServer({ name: name, blob: blob });
+        addStoreLink(j);
+        refreshShared();
+        showToast('✅ 已存到服务器：' + j.name);
+      } catch (e) {
+        showToast('存档失败: ' + (e.message || ''), true);
+      }
+      sbtn.disabled = false;
+    };
+    li.appendChild(sbtn);
     zipList.appendChild(li);
   }
 
@@ -987,6 +1029,56 @@ const html = `<!DOCTYPE html>
 
   zipAllBtn.onclick = () => {
     zipBuilt.forEach((z, i) => setTimeout(() => saveBlob(z.blob, z.name), i * 300));
+  };
+
+  // 把生成的压缩包存到服务器 shared/，之后任何设备都能下载（支持断点续传）
+  const zipStoreBtn = document.getElementById('zipStoreBtn');
+  const zipStoreResultEl = document.getElementById('zipStoreResult');
+  const zipStoreListEl = document.getElementById('zipStoreList');
+
+  async function storeZipToServer(z) {
+    const r = await api('/package?name=' + encodeURIComponent(z.name), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: z.blob,
+    });
+    let j = null;
+    try { j = await r.json(); } catch (e) { j = null; }
+    if (!j || !j.ok) throw new Error((j && j.error) || ('HTTP ' + r.status));
+    return j;
+  }
+
+  function addStoreLink(j) {
+    zipStoreResultEl.style.display = 'block';
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="sname">' + escapeHtml(j.name) + '</span><span class="meta">' + fmtSize(j.size) + '</span>';
+    const b = document.createElement('button');
+    b.textContent = '下载';
+    b.onclick = () => downloadFile(j.name, j.size, '/shared/download');
+    li.appendChild(b);
+    zipStoreListEl.appendChild(li);
+  }
+
+  zipStoreBtn.onclick = async () => {
+    if (!zipBuilt.length) { showToast('请先生成压缩包', true); return; }
+    const label = zipStoreBtn.textContent;
+    zipStoreBtn.disabled = true;
+    let savedCount = 0;
+    try {
+      for (let i = 0; i < zipBuilt.length; i++) {
+        zipStoreBtn.textContent = '☁️ 正在保存 ' + (i + 1) + '/' + zipBuilt.length + ' ...';
+        const j = await storeZipToServer(zipBuilt[i]);
+        addStoreLink(j);
+        savedCount += 1;
+      }
+      refreshShared();
+      showToast('✅ 已存到服务器 ' + savedCount + ' 个压缩包');
+    } catch (e) {
+      showToast('保存失败: ' + (e.message || ''), true);
+    } finally {
+      zipStoreBtn.disabled = false;
+      zipStoreBtn.textContent = label;
+    }
   };
 
   // 合并：选择分片
@@ -1307,6 +1399,57 @@ function handleDownload(req, res, url, baseDir) {
   }
 }
 
+// 收集网页端 POST 上来的 ZIP 包，写入 shared/，返回可直接下载的链接
+function handlePackage(req, res, url) {
+  if (!checkKey(req, url)) { writeJson(res, 401, { ok: false, error: '访问密钥无效' }); return; }
+  const raw = url.searchParams.get('name') || req.headers['x-file-name'] || '';
+  let wanted = '';
+  try { wanted = decodeURIComponent(String(raw)); } catch (e) { wanted = String(raw); }
+  if (!wanted.trim()) wanted = 'package-' + Date.now() + '.zip';
+  if (!/\.zip$/i.test(wanted)) wanted += '.zip';
+  const name = uniqueSharedName(wanted);
+  const target = path.join(SHARE_DIR, name);
+  const tmp = target + tmpSuffix();
+  let written = 0;
+  let aborted = false;
+  const out = fs.createWriteStream(tmp);
+  req.on('data', (chunk) => {
+    written += chunk.length;
+    if (written > MAX_FILE_SIZE) { aborted = true; req.destroy(); }
+  });
+  req.on('aborted', () => { aborted = true; safeUnlink(tmp); });
+  req.on('error', () => { aborted = true; safeUnlink(tmp); });
+  out.on('error', () => {
+    aborted = true;
+    safeUnlink(tmp);
+    try { writeJson(res, 500, { ok: false, error: '写入失败' }); } catch (e) {}
+  });
+  req.pipe(out);
+  out.on('finish', () => {
+    if (aborted) {
+      safeUnlink(tmp);
+      if (!res.headersSent) writeJson(res, 413, { ok: false, error: '压缩包超出服务端上限' });
+      return;
+    }
+    try {
+      fs.renameSync(tmp, target);
+    } catch (e) {
+      safeUnlink(tmp);
+      writeJson(res, 500, { ok: false, error: '保存失败' });
+      return;
+    }
+    let size = 0;
+    try { size = fs.statSync(target).size; } catch (e) {}
+    console.log('package saved: ' + name + ' (' + size + ' bytes)');
+    writeJson(res, 200, {
+      ok: true,
+      name: name,
+      size: size,
+      download: '/shared/download?name=' + encodeURIComponent(name),
+    });
+  });
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
 
@@ -1340,6 +1483,12 @@ const server = http.createServer((req, res) => {
   // 校验访问密钥（唯一无需密钥的接口）
   if (req.method === 'GET' && url.pathname === '/auth') {
     writeJson(res, 200, { ok: checkKey(req, url), keyRequired: !!UPLOAD_KEY });
+    return;
+  }
+
+  // 把网页里生成的压缩包存档到 shared/，之后在任何设备都能下载（支持断点续传）
+  if (req.method === 'POST' && url.pathname === '/package') {
+    handlePackage(req, res, url);
     return;
   }
 
