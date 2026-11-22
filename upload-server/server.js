@@ -243,6 +243,29 @@ const html = `<!DOCTYPE html>
         <div class="split-result-title">分割完成，共 <span id="splitCount"></span> 片：</div>
         <button class="dl-all-btn" id="dlAllBtn">⬇️ 全部下载</button>
         <ul class="split-list" id="splitList"></ul>
+        <div class="split-result-title" style="margin-top:16px">📦 打包下载：把分片装进 ZIP，一次性取走</div>
+        <div class="split-size-row">
+          <span>打包方式：</span>
+          <select id="zipMode">
+            <option value="volume" selected>分卷（每卷不超过）</option>
+            <option value="single">整包（一个 ZIP）</option>
+          </select>
+          <select id="zipVolSize">
+            <option value="52428800">50 MB</option>
+            <option value="104857600" selected>100 MB</option>
+            <option value="209715200">200 MB</option>
+            <option value="524288000">500 MB</option>
+          </select>
+        </div>
+        <button class="split-start" id="zipBuildBtn">📦 生成压缩包</button>
+        <div id="zipProgress" style="display:none;margin-top:12px">
+          <div class="dl-task"><div class="t-head"><span class="t-name" id="zipTaskName">打包中</span><span class="t-pct" id="zipTaskPct">0%</span></div><div class="bar"><div></div></div><div class="t-info" id="zipTaskInfo">准备中...</div></div>
+        </div>
+        <div id="zipResult" style="display:none">
+          <div class="split-result-title">已生成 <span id="zipCount"></span> 个压缩包：</div>
+          <button class="dl-all-btn" id="zipAllBtn">⬇️ 全部下载压缩包</button>
+          <ul class="split-list" id="zipList"></ul>
+        </div>
       </div>
     </div>
     <div class="split-panel" id="mergePanel" style="display:none">
@@ -263,6 +286,7 @@ const html = `<!DOCTYPE html>
   </div>
 </div>
 <div id="toast"></div>
+<script src="/zip-store.js"></script>
 <script>
   const CHUNK_LIMIT = 15 * 1024 * 1024; // 单片 15MB
   const MAX_ATTEMPTS = 10;              // 单片最多尝试 10 次（与页面提示一致）
@@ -803,6 +827,10 @@ const html = `<!DOCTYPE html>
     document.getElementById('splitTaskName').textContent = '✂️ ' + splitFile.name;
     progress.style.display = 'block';
     document.getElementById('splitResult').style.display = 'none';
+    document.getElementById('zipResult').style.display = 'none';
+    document.getElementById('zipProgress').style.display = 'none';
+    document.getElementById('zipList').innerHTML = '';
+    zipBuilt = [];
     splitBlobs = [];
 
     (async () => {
@@ -852,6 +880,113 @@ const html = `<!DOCTYPE html>
       const partName = splitFile.name + '.part' + String(i + 1).padStart(pad, '0') + '-' + total;
       setTimeout(() => saveBlob(blob, partName), i * 300);
     });
+  };
+
+  // ========== 分片打包成 ZIP（整包 / 分卷） ==========
+  let zipBuilt = [];   // [{name, blob}] 本次生成的所有压缩包
+  const zipModeSel = document.getElementById('zipMode');
+  const zipVolSel = document.getElementById('zipVolSize');
+  const zipBuildBtn = document.getElementById('zipBuildBtn');
+  const zipProgress = document.getElementById('zipProgress');
+  const zipResult = document.getElementById('zipResult');
+  const zipList = document.getElementById('zipList');
+  const zipAllBtn = document.getElementById('zipAllBtn');
+
+  zipModeSel.onchange = () => {
+    zipVolSel.style.display = zipModeSel.value === 'single' ? 'none' : 'inline-block';
+  };
+
+  function currentPartFiles() {
+    if (!splitFile || !splitBlobs.length) return [];
+    const total = splitBlobs.length;
+    const pad = String(total).length;
+    return splitBlobs.map((blob, i) => ({
+      name: splitFile.name + '.part' + String(i + 1).padStart(pad, '0') + '-' + total,
+      blob: blob
+    }));
+  }
+
+  function addZipRow(name, blob) {
+    zipBuilt.push({ name: name, blob: blob });
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="sname">' + escapeHtml(name) + '</span><span class="meta">' + fmtSize(blob.size) + '</span>';
+    const btn = document.createElement('button');
+    btn.textContent = '下载';
+    btn.onclick = () => saveBlob(blob, name);
+    li.appendChild(btn);
+    zipList.appendChild(li);
+  }
+
+  zipBuildBtn.onclick = () => {
+    if (!splitFile || !splitBlobs.length) { showToast('请先分割文件', true); return; }
+    if (!window.ZipStore) { showToast('打包组件未加载，请刷新页面重试', true); return; }
+    const files = currentPartFiles();
+    const mode = zipModeSel.value;
+    const limit = mode === 'single' ? 0 : parseInt(zipVolSel.value, 10);
+    const totalBytes = files.reduce((a, f) => a + f.blob.size, 0);
+    if (mode === 'single' && totalBytes >= 3.9 * 1024 * 1024 * 1024) {
+      showToast('整包会超过 3.9GB，ZIP32 装不下，请改用分卷打包', true);
+      return;
+    }
+    const volumes = window.ZipStore.planVolumes(files, limit);
+    const base = splitFile.name.replace(/[\\/:*?"<>|]/g, '_');
+    const totalPad = String(files.length).length;
+
+    zipBuildBtn.disabled = true;
+    zipList.innerHTML = '';
+    zipBuilt = [];
+    zipResult.style.display = 'none';
+    zipProgress.style.display = 'block';
+    const bar = zipProgress.querySelector('.bar > div');
+    const pct = document.getElementById('zipTaskPct');
+    const info = document.getElementById('zipTaskInfo');
+    const nameEl = document.getElementById('zipTaskName');
+    let completed = 0;
+    let cursor = 0;   // 当前卷在 files 里的起始下标
+
+    (async () => {
+      for (let vi = 0; vi < volumes.length; vi++) {
+        const vol = volumes[vi];
+        const firstNo = cursor + 1;
+        const lastNo = cursor + vol.length;
+        cursor += vol.length;
+        let zipName;
+        if (mode === 'single') {
+          zipName = base + '.parts.zip';
+        } else if (vol.length === 1) {
+          zipName = base + '.part' + String(firstNo).padStart(totalPad, '0') + '.zip';
+        } else {
+          zipName = base + '.part' + String(firstNo).padStart(totalPad, '0') + '-' + String(lastNo).padStart(totalPad, '0') + '.zip';
+        }
+        nameEl.textContent = '📦 ' + zipName;
+        info.textContent = '正在打包第 ' + (vi + 1) + '/' + volumes.length + ' 个压缩包（' + vol.length + ' 片）...';
+        const blob = await window.ZipStore.buildZip(vol, {
+          onProgress: (done) => {
+            const overall = Math.round(((completed + done) / (totalBytes || 1)) * 100);
+            bar.style.width = overall + '%';
+            pct.textContent = overall + '%';
+          }
+        });
+        completed += vol.reduce((a, f) => a + f.blob.size, 0);
+        addZipRow(zipName, blob);
+      }
+      bar.style.width = '100%';
+      pct.textContent = '✅ 完成';
+      info.textContent = '已生成 ' + zipBuilt.length + ' 个压缩包';
+      zipResult.style.display = 'block';
+      document.getElementById('zipCount').textContent = zipBuilt.length;
+      zipBuildBtn.disabled = false;
+      showToast('✅ 已生成 ' + zipBuilt.length + ' 个压缩包');
+    })().catch((err) => {
+      zipBuildBtn.disabled = false;
+      pct.textContent = '❌ 失败';
+      info.textContent = err.message || '打包失败';
+      showToast('打包失败: ' + (err.message || ''), true);
+    });
+  };
+
+  zipAllBtn.onclick = () => {
+    zipBuilt.forEach((z, i) => setTimeout(() => saveBlob(z.blob, z.name), i * 300));
   };
 
   // 合并：选择分片
@@ -1179,6 +1314,26 @@ const server = http.createServer((req, res) => {
   if (req.method === 'GET' && url.pathname === '/') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(html);
+    return;
+  }
+
+  // 浏览器自动请求的图标，直接返回空，避免 401 噪音
+  if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // 前端打包组件（纯静态脚本，不含任何数据）
+  if (req.method === 'GET' && url.pathname === '/zip-store.js') {
+    try {
+      const src = fs.readFileSync(path.join(__dirname, 'zip-store.js'), 'utf8');
+      res.writeHead(200, { 'Content-Type': 'application/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(src);
+    } catch (e) {
+      res.writeHead(500, { 'Content-Type': 'application/javascript; charset=utf-8' });
+      res.end('window.ZipStore = null;');
+    }
     return;
   }
 
