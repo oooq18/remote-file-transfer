@@ -1156,7 +1156,7 @@ function removeTmp(job) {
 function handleUpload(req, res) {
   let bb;
   try {
-    bb = busboy({ headers: req.headers, limits: { files: 20, fields: 20, fieldSize: 1024 } });
+    bb = busboy({ headers: req.headers, defParamCharset: 'utf8', limits: { files: 20, fields: 20, fieldSize: 1024 } });
   } catch (e) {
     writeJson(res, 400, { ok: false, error: 'bad request' });
     return;
