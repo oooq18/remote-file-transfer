@@ -1201,6 +1201,10 @@ function handleUpload(req, res) {
       limit = MAX_FILE_SIZE;
     }
 
+    // 每次写入前确保目录存在：临时目录被清理或挂载点变更时不会直接 ENOENT
+    fs.mkdirSync(PARTS_DIR, { recursive: true });
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
     const ws = fs.createWriteStream(tmpPath);
     const job = { file, ws, tmpPath, finalPath, partDir: isChunk ? path.dirname(finalPath) : null, origName: safeName(info.filename), failed: false, tooBig: false, reason: '' };
     job.done = new Promise((resolve) => {
